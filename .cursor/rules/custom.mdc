@@ -1,0 +1,174 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+
+**"Desarrolla un proyecto completo de machine learning para predecir estadísticas de jugadores de la NBA (puntos, rebotes y asistencias) basado en el dataset '2024-2025.csv', que contiene las siguientes columnas: Player, Date, Team, Opp, Result, GS, MP, FG, FGA, FG%, 2P, 2PA, 2P%, 3P, 3PA, 3P%, FT, FTA, FT%, TS%, ORB, DRB, TRB, AST, STL, BLK, TOV, PF, PTS, GmSc, BPM, +/-, Pos. El objetivo es crear tres modelos específicos, cada uno en su propio módulo: uno para predecir puntos (PTS) usando una Red Neuronal Densa (MLP) en PyTorch, otro para predecir rebotes totales (TRB) usando una Red LSTM en PyTorch, y otro para predecir asistencias (AST) usando una Red Neuronal con Atención en PyTorch. Luego, implementa un módulo final que combine las predicciones mediante un ensamblado con XGBoost y realice las predicciones finales. Usa una división de datos de 70% entrenamiento, 15% validación y 15% prueba. Implementa una ingeniería de características robusta basada en las columnas proporcionadas, diseñada minuciosamente para asegurar un 97% de efectividad (interpretado como un R² cercano a 0.97 o un MAE muy bajo), creando nuevas características derivadas que capturen patrones complejos. Organiza las exportaciones en carpetas separadas: 'visualizaciones' para gráficos, 'modelos' para pesos, e 'informes' para reportes detallados. Genera un informe exhaustivo al final de cada entrenamiento para permitir mejoras puntuales. Sigue estas instrucciones paso a paso para construir el proyecto desde cero:**
+
+#### **1. Estructura General del Proyecto**
+- **Módulos:**
+- `data_preprocessing.py`: Carga, limpia y realiza la ingeniería de características.
+- `pts_model.py`: Define, entrena y evalúa el MLP para PTS.
+- `trb_model.py`: Define, entrena y evalúa el LSTM para TRB.
+- `ast_model.py`: Define, entrena y evalúa la Red con Atención para AST.
+- `ensemble_model.py`: Implementa el ensamblado con XGBoost y genera predicciones finales.
+- `main.py`: Coordina la ejecución de todos los módulos.
+- **Carpetas de Exportación:**
+- `visualizaciones/`: Gráficos (e.g., scatter plots).
+- `modelos/`: Pesos de modelos (.pth para PyTorch, .model para XGBoost).
+- `informes/`: Reportes detallados en texto o JSON.
+- **Requerimientos:**
+- Usa Python con pandas, numpy, scikit-learn, torch (PyTorch), xgboost, y matplotlib/seaborn.
+
+---
+
+#### **2. Preprocesamiento de Datos y Ingeniería de Características (data_preprocessing.py)**
+- **Carga y Limpieza:**
+- Carga '2024-2025.csv' con pandas.
+- Imputa valores nulos: mediana para numéricas (e.g., MP, PTS), moda para categóricas (e.g., Pos).
+- Convierte 'Date' a datetime y ordena por 'Player' y 'Date'.
+
+- **Ingeniería de Características Robustas:**
+- **Características Temporales (por Jugador):**
+- Promedios móviles: Calcula el promedio de PTS, TRB, AST, MP, FG, FGA, 3P, 3PA, FT, FTA, STL, BLK, TOV, PF, GmSc, BPM, +/- en los últimos 3, 5 y 10 juegos.
+- Tendencias: Diferencia entre el promedio de los últimos 5 juegos y los 5 anteriores para PTS, TRB, AST (e.g., tendencia_pts_5).
+- Máximos recientes: Máximo valor de PTS, TRB, AST en los últimos 5 juegos.
+- Minutos por juego promedio: Promedio de MP en los últimos 5 y 10 juegos.
+- **Eficiencia y Ratios:**
+- Tiros por minuto: FG / MP, FGA / MP, 3P / MP, FT / MP.
+- Eficiencia ajustada: TS% * MP (pondera eficiencia por tiempo jugado).
+- Ratio de uso: (FGA + 0.44 * FTA + TOV) / MP (aproximación de uso ofensivo).
+- Rebotes por minuto: ORB / MP, DRB / MP, TRB / MP.
+- Asistencias por turno perdido: AST / TOV (si TOV=0, usa un valor pequeño como 0.1).
+- **Interacciones con el Contexto:**
+- Dummy de titularidad reciente: Promedio de GS en los últimos 5 juegos (0 a 1).
+- Diferencial vs. oponente: Promedio de +/- en los últimos 5 juegos contra el mismo 'Opp'.
+- Victorias recientes: Proporción de 'Result' = W en los últimos 5 juegos.
+- **Estadísticas Avanzadas Derivadas:**
+- Contribución defensiva: STL + BLK por minuto (STL + BLK) / MP.
+- Impacto neto ajustado: BPM * MP / 48 (normalizado a 48 minutos).
+- Game Score por minuto: GmSc / MP.
+- **Interacciones entre Variables:**
+- AST * STL: Captura relación entre asistencias y robos.
+- TRB * BLK: Relaciona rebotes con bloqueos.
+- PTS * TS%: Pondera puntos por eficiencia.
+- **Características Categóricas Mejoradas:**
+- Frecuencia de enfrentamiento: Número de juegos previos contra el mismo 'Opp' en la temporada.
+- Posición-oponente: Concatena 'Pos' y 'Opp' (e.g., PG-LAL) y codifica como variable categórica adicional.
+- **Secuencias Temporales para LSTM:**
+- Para TRB, genera secuencias de 5 juegos con todas las características originales y derivadas (excepto TRB).
+
+- **Codificación de Variables:**
+- **Categóricas:**
+- PyTorch: Embeddings entrenables para 'Pos' (vocab=5), 'Team' (vocab=30), 'Opp' (vocab=30), y 'Pos-Opp' (vocab=150 aprox.), dimensión 8.
+- XGBoost: One-Hot Encoding para 'Pos', 'Team', 'Opp', 'Pos-Opp'.
+- **Binarias:** 'GS' (1 o 0), 'Result' (W=1, L=0).
+
+- **Normalización:**
+- PyTorch: Estandariza todas las características numéricas (originales y derivadas) a media 0, desviación 1. Guarda parámetros.
+- XGBoost: Usa datos sin normalizar.
+
+- **División del Dataset:**
+- Divide en:
+- Entrenamiento: 70%
+- Validación: 15% 
+- Prueba: 15% 
+- Respeta la cronología con 'Date'.
+- Usa `torch.utils.data.Dataset` y `DataLoader` para manejar los datos.
+
+- **Exportación:**
+- Guarda datasets preprocesados en archivos .pt.
+
+---
+
+#### **3. Modelo para Puntos (pts_model.py) - MLP en PyTorch**
+- **Objetivo:** Predecir 'PTS'.
+- **Características:** Todas las columnas numéricas originales y derivadas (normalizadas) + índices para embeddings de 'Pos', 'Team', 'Opp', 'Pos-Opp'.
+- **Arquitectura:**
+- Clase heredada de `torch.nn.Module`.
+- Embeddings para 'Pos', 'Team', 'Opp', 'Pos-Opp' (dimensión 8).
+- Concatena características numéricas y embeddings.
+- Red densa: entrada (tamaño total), capas ocultas (128, 64, 32 neuronas, ReLU, dropout 0.2), salida (1 neurona).
+- **Entrenamiento:**
+- Pérdida: `torch.nn.L1Loss` (MAE).
+- Optimizador: Adam, lr=0.001.
+- Batch size: 32.
+- Epochs: 100, early stopping (paciencia=10).
+- **Evaluación:** MAE y R² en entrenamiento, validación, prueba.
+- **Informe:** `informes/pts_training_report.txt` con MAE/R² por epoch, mejor epoch, tiempo, sugerencias (e.g., ajustar capas si subajuste).
+- **Exportaciones:** Modelo en `modelos/pts_mlp.pth`, scatter plot en `visualizaciones/pts_predictions.png`.
+
+---
+
+#### **4. Modelo para Rebotes (trb_model.py) - LSTM en PyTorch**
+- **Objetivo:** Predecir 'TRB'.
+- **Características:** Secuencias de 5 juegos con todas las características numéricas originales y derivadas (normalizadas, excepto TRB) + índices para embeddings.
+- **Arquitectura:**
+- Clase heredada de `torch.nn.Module`.
+- Embeddings para 'Pos', 'Team', 'Opp', 'Pos-Opp' por timestep.
+- Concatena en cada timestep.
+- Dos capas LSTM (100 y 50 unidades, batch_first=True), dropout 0.2, capa densa final (1 neurona).
+- **Entrenamiento:**
+- Pérdida: `torch.nn.L1Loss`.
+- Optimizador: Adam, lr=0.001.
+- Batch size: 32.
+- Epochs: 100, early stopping (paciencia=10).
+
+- **Evaluación:** MAE y R².
+- **Informe:** `informes/trb_training_report.txt` con métricas, tiempo, sugerencias (e.g., más timesteps si pérdida alta).
+- **Exportaciones:** Modelo en `modelos/trb_lstm.pth`, scatter plot en `visualizaciones/trb_predictions.png`.
+
+---
+
+#### **5. Modelo para Asistencias (ast_model.py) - Red con Atención en PyTorch**
+- **Objetivo:** Predecir 'AST'.
+- **Características:** Todas las características numéricas originales y derivadas (normalizadas) + índices para embeddings.
+- **Arquitectura:**
+- Clase heredada de `torch.nn.Module`.
+- Embeddings para 'Pos', 'Team', 'Opp', 'Pos-Opp'.
+- Capa lineal (64 dimensiones), atención multi-cabeza (4 cabezas, embed_dim=64), capa densa (32 neuronas, ReLU, dropout 0.2), salida (1 neurona).
+- **Entrenamiento:**
+- Pérdida: `torch.nn.L1Loss`.
+- Optimizador: Adam, lr=0.001.
+- Batch size: 32.
+- Epochs: 100, early stopping (paciencia=10).
+
+- **Evaluación:** MAE y R².
+- **Informe:** `informes/ast_training_report.txt` con métricas, tiempo, sugerencias (e.g., ajustar cabezas si sobreajuste).
+- **Exportaciones:** Modelo en `modelos/ast_attention.pth`, scatter plot en `visualizaciones/ast_predictions.png`.
+
+---
+
+#### **6. Ensamblado (ensemble_model.py) - XGBoost**
+- **Objetivo:** Combinar predicciones de MLP, LSTM y Atención con XGBoost.
+- **Preparación:**
+- Genera predicciones de los modelos PyTorch en validación.
+- Crea datasets: predicciones + columnas originales (sin normalizar).
+- **Arquitectura:**
+- Tres XGBoost independientes: `n_estimators` (200-500), `max_depth` (4-6), `learning_rate` (0.01-0.05), `objective='reg:absoluteerror'`, early stopping (10 rondas).
+- **Entrenamiento y Predicciones:** Entrena y predice en prueba.
+- **Informe:** `informes/ensemble_{target}_report.txt` con MAE/R², tiempo, sugerencias (e.g., ajustar `max_depth`).
+- **Exportaciones:** Modelos en `modelos/ensemble_{target}_xgb.model`, scatter plots en `visualizaciones/ensemble_{target}_predictions.png`.
+
+---
+
+#### **7. Ejecución Principal (main.py)**
+- **Flujo:** Preprocesa datos, entrena modelos PyTorch, genera predicciones, entrena ensamblado, exporta resultados.
+- **Detalles:** Usa funciones modulares para cada paso.
+
+---
+
+#### **8. Resultados y Entrega**
+- **Salida:** Informes, modelos y visualizaciones en sus respectivas carpetas.
+- **Código:** Python con comentarios detallados.
+
+---
+
+#### **Notas Adicionales**
+- Fija semillas (`torch.manual_seed(42)`, `np.random.seed(42)`).
+- Ajusta hiperparámetros según informes para alcanzar R² ~0.97.
+
+**Construye este proyecto desde cero con una ingeniería de características robusta para asegurar alta efectividad. ¡Comienza ahora!**"
+
+---
