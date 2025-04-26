@@ -166,85 +166,62 @@ class EnsembleModel:
     def train_xgboost_models(self, train_loader, val_loader, force_retrain=True):
         """Entrena modelos XGBoost con configuración mejorada y técnicas de reducción de varianza."""
         targets = ['PTS', 'TRB', 'AST']
-        
+
         for target in targets:
-            if self.xgb_models[target.upper()] is None:
-                print(f"\nEntrenando modelo XGBoost para {target.upper()}")
-            
-                # Preparar datos específicos para cada objetivo
+            existing = self.xgb_models.get(target)
+            # Entrena solo si no hay modelo o se fuerza retraining
+            if existing is None or force_retrain:
+                print(f"\nEntrenando modelo XGBoost para {target}")
+
+                # Preparar los datos
                 X_train, y_train = self.prepare_xgboost_features(train_loader, target)
                 X_val, y_val = self.prepare_xgboost_features(val_loader, target)
 
+                # Inicializar el XGBRegressor
                 model = XGBRegressor(
                     n_estimators=1000,
                     max_depth=6,
                     min_child_weight=3,
-                    subsample=0.8,  
-                    colsample_bytree=0.8,  
-                    colsample_bylevel=0.8, 
-                    colsample_bynode=0.8, 
-                    gamma=1,  
-                    reg_alpha=0.1,  # Regularización L1
-                    reg_lambda=1,  # Regularización L2
+                    subsample=0.8,
+                    colsample_bytree=0.8,
+                    colsample_bylevel=0.8,
+                    colsample_bynode=0.8,
+                    gamma=1,
+                    reg_alpha=0.1,
+                    reg_lambda=1,
                     learning_rate=0.1,
                     random_state=42,
                     eval_metric='rmse',
                     early_stopping_rounds=50,
-                    tree_method='hist',  
-                    grow_policy='lossguide',  
-                    max_bin=256,  
-                    max_leaves=0,  
-                    scale_pos_weight=1,  
-                    booster='gbtree',  
-                    objective='reg:squarederror',  
-                    base_score=0.5,  
-                    importance_type='gain' 
+                    tree_method='hist',
+                    grow_policy='lossguide',
+                    max_bin=256,
+                    max_leaves=0,
+                    scale_pos_weight=1,
+                    booster='gbtree',
+                    objective='reg:squarederror',
+                    base_score=0.5,
+                    importance_type='gain'
                 )
-                
-                # Entrenar modelo con validación cruzada para reducir varianza
+
+                # Entrenar
                 print(f"Iniciando entrenamiento para {target}")
                 model.fit(
-                X_train, y_train.ravel(),
-                eval_set=[(X_val, y_val.ravel())],
-                verbose=True,
-            )
-            # Si ya existe un modelo previo, verificar si el nuevo es mejor
-            if not force_retrain and self.xgb_models[target.upper()] is not None:
-                # Evaluar modelo previo
-                prev_model = self.xgb_models[target.upper()]
-                dval = xgb.DMatrix(X_val, y_val.ravel())
-                prev_pred = prev_model.predict(dval)
-                prev_rmse = np.sqrt(np.mean((y_val.ravel() - prev_pred) ** 2))
-            
-                # Evaluar nuevo modelo
-                new_pred = model.predict(X_val)
-                new_rmse = np.sqrt(np.mean((y_val.ravel() - new_pred) ** 2))
-            
-                print(f"Modelo previo RMSE: {prev_rmse:.4f}, Nuevo modelo RMSE: {new_rmse:.4f}")
-                
-                self.xgb_models[target.upper()] = model
-                print(f"Modelo {target} entrenado. Mejor score: {model.best_score}")
-                
-                # Guardar el mejor modelo
-                if new_rmse < prev_rmse:
-                    print(f"El nuevo modelo para {target} es mejor. Actualizando.")
-                    self.xgb_models[target.upper()] = model
-                    model_path = os.path.join(self.model_dir, 'modelos', f'ensemble_{target.lower()}_xgb.json')
-                    model.save_model(model_path)
-                    print(f"Modelo guardado en {model_path}")
-                else:
-                    print(f"El modelo previo para {target} es mejor. Manteniendo modelo anterior.")
-            else:
-                # Siempre guardar el nuevo modelo si force_retrain es True o no hay modelo previo
-                self.xgb_models[target.upper()] = model
-                print(f"Modelo {target} entrenado. Mejor score: {model.best_score}")
-            
-                # Guardar el modelo
+                    X_train, y_train.ravel(),
+                    eval_set=[(X_val, y_val.ravel())],
+                    verbose=True,
+                )
+
+                # Guardar el modelo entrenado
+                self.xgb_models[target] = model
                 model_path = os.path.join(self.model_dir, 'modelos', f'ensemble_{target.lower()}_xgb.json')
                 model.save_model(model_path)
-                print(f"Modelo guardado en {model_path}")
-    
-            return self.xgb_models
+                print(f"Modelo {target} entrenado y guardado en {model_path}")
+
+            else:
+                print(f"Se omite entrenamiento para {target} (modelo existente y force_retrain={force_retrain})")
+
+        return self.xgb_models
 
     def prepare_xgboost_features(self, data_loader, target_col='pts'):
         """Prepara características para XGBoost con ingeniería de características mejorada."""
@@ -328,12 +305,16 @@ class EnsembleModel:
         results = {}
         
         for target, model in self.xgb_models.items():
-            # Convertir datos a DMatrix
-            dtest = xgb.DMatrix(X_test)
-            
-            # Hacer predicciones
-            y_pred = model.predict(dtest)
-            y_true = y_test.ravel() 
+            # Predicciones según tipo de modelo XGBoost
+            if isinstance(model, xgb.Booster):
+                # Booster acepta DMatrix
+                dtest = xgb.DMatrix(X_test)
+                y_pred = model.predict(dtest)
+            else:
+                # XGBRegressor acepta arrays numpy o DataFrame
+                y_pred = model.predict(X_test)
+
+            y_true = y_test.ravel()
             
             # Calcular métricas
             mae = mean_absolute_error(y_true, y_pred)

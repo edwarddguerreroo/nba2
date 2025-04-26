@@ -86,7 +86,13 @@ def main():
     print("\nEntrenando modelo de ensamblado...")
     ensemble = EnsembleModel(output_dir)
     ensemble.load_pytorch_models()
-    ensemble.train_xgboost_models(pts_data[0], pts_data[1])  # Usar datos de PTS como ejemplo
+
+    # Forzar reentrenamiento de XGBoost (aunque existan .json previos)
+    ensemble.train_xgboost_models(
+        pts_data[0],   # train_loader
+        pts_data[1],   # val_loader
+        force_retrain=True
+    )
     
     # Evaluar ensamblado
     print("\nEvaluando modelo de ensamblado...")

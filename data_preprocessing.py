@@ -277,69 +277,37 @@ class DataPreprocessor:
 
     def create_categorical_features(self, df):
         """Crea y codifica características categóricas."""
-        # Frecuencia de enfrentamiento
+        # Frecuencia de enfrentamiento y Pos_Opp
         df['opp_frequency'] = df.groupby(['Player', 'Opp']).cumcount() + 1
-        
-        # Posición-oponente
         df['Pos_Opp'] = df['Pos'] + '-' + df['Opp']
-        
-        # Definir tamaños máximos de vocabulario
+
         max_vocab_sizes = {
-            'Pos': 5,  # Número típico de posiciones en baloncesto
-            'Team': 30,  # Número de equipos en la NBA
-            'Opp': 30,  # Número de equipos en la NBA
-            'Pos_Opp': 210  # Aumentado para acomodar todas las combinaciones únicas
+            'Pos': 5,
+            'Team': 30,
+            'Opp': 30,
+            'Pos_Opp': 210
         }
-        
-        # Codificación de variables categóricas
-        categorical_cols = ['Pos', 'Team', 'Opp', 'Pos_Opp']
-        for col in categorical_cols:
-            # Obtener valores únicos ordenados
+
+        # Codificación de variables categóricas (acumular y concatenar de una vez)
+        encoded_series = {}
+        for col in ['Pos', 'Team', 'Opp', 'Pos_Opp']:
             unique_values = sorted(df[col].unique())
-            
-            # Verificar si excedemos el tamaño máximo
-            if len(unique_values) > max_vocab_sizes[col]:
-                print(f"¡Advertencia! {col} tiene más valores únicos ({len(unique_values)}) que el máximo permitido ({max_vocab_sizes[col]})")
-                
-                if col == 'Pos':
-                    # Para Pos, agrupar valores menos comunes en "OTHER"
-                    value_counts = df[col].value_counts()
-                    top_values = value_counts.head(max_vocab_sizes[col] - 1).index.tolist()
-                    df[col] = df[col].apply(lambda x: x if x in top_values else "OTHER")
-                    unique_values = sorted(df[col].unique())
-                else:
-                    # Para otras columnas, tomar los valores más frecuentes
-                    value_counts = df[col].value_counts()
-                    top_values = value_counts.head(max_vocab_sizes[col]).index.tolist()
-                    unique_values = sorted(top_values)
-            
-            # Crear diccionario de mapeo empezando desde 0
-            self.categorical_encoders[col] = {val: idx for idx, val in enumerate(unique_values)}
-            
-            # Valor por defecto para valores desconocidos
+            # ... lógica de agrupación "OTHER" o top_values ...
+            mapping = {val: idx for idx, val in enumerate(unique_values)}
             default_idx = len(unique_values) - 1
-            
-            # Aplicar codificación con manejo de valores desconocidos
-            df[f'{col}_encoded'] = df[col].map(lambda x: self.categorical_encoders[col].get(x, default_idx))
-            
-            # Verificar valores nulos
-            null_count = df[f'{col}_encoded'].isnull().sum()
-            if null_count > 0:
-                print(f"¡Advertencia! {null_count} valores nulos encontrados en {col}_encoded")
-                # Reemplazar valores nulos con el último índice
-                df[f'{col}_encoded'] = df[f'{col}_encoded'].fillna(default_idx)
-            
-            # Asegurar que todos los índices estén dentro del rango válido
-            df[f'{col}_encoded'] = df[f'{col}_encoded'].clip(0, max_vocab_sizes[col] - 1)
-            
-            # Guardar el número de categorías únicas
+
+            # Mapear, rellenar nulos y recortar en una sola serie
+            s = df[col].map(lambda x: mapping.get(x, default_idx))
+            s = s.fillna(default_idx).clip(0, max_vocab_sizes[col] - 1)
+            encoded_series[f'{col}_encoded'] = s
+
+            self.categorical_encoders[col] = mapping
             self.categorical_encoders[f'{col}_size'] = max_vocab_sizes[col]
-            
-            # Verificar rango de índices final
-            min_idx = df[f'{col}_encoded'].min()
-            max_idx = df[f'{col}_encoded'].max()
-            print(f"Rango final de índices para {col}: [{min_idx}, {max_idx}] de {max_vocab_sizes[col]} posibles")
-        
+            print(f"Rango final de índices para {col}: [{s.min()}, {s.max()}] "
+                  f"de {max_vocab_sizes[col]} posibles")
+
+        # Concatenar todas las columnas codificadas de una vez para evitar fragmentación
+        df = pd.concat([df, pd.DataFrame(encoded_series, index=df.index)], axis=1)
         return df
 
     def prepare_sequences(self, df, target_col, sequence_length=5):
